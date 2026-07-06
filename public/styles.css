@@ -1461,7 +1461,20 @@ select {
 }
 
 .seedwrapper {
-    height: calc(100vh - 330px);
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: calc(100vh - 330px);
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
+/* Seed screens: bound the white card to the viewport so the seed grid scrolls
+   inside it instead of overflowing (notably in the taller docked/detached
+   surfaces). The min-height:0 above is required because a flex item defaults to
+   min-height:auto (its full content height), which would otherwise override the
+   max-height and prevent the grid from ever clipping/scrolling. */
+.roundex-box-middle:has(.seedwrapper) {
+    max-height: calc(100vh - 150px);
 }
 
 .buttonBox {
@@ -1575,6 +1588,15 @@ select {
 
 .blocks-content {
     max-height: calc(100vh - 360px);
+}
+
+/* Bounds a wallet screen's inner card to the space below the fixed header so a
+   vertical scrollbar appears dynamically when its content overflows (notably in
+   the fixed-height overlay popup). Viewport-based so it also works when docked. */
+.screen-scroll-box {
+    max-height: calc(100vh - 170px);
+    overflow-y: auto;
+    overflow-x: auto;
 }
 
 
