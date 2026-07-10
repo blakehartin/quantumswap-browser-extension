@@ -38,6 +38,31 @@
         });
     }
 
+    // Hold a dedicated port to the background for the popup's whole lifetime.
+    // An open port + periodic pings keep the MV3 service worker (and its
+    // in-memory pending request map + the dApp's relay port) alive through slow
+    // signing, so the qc_sendTransaction result is still delivered afterward.
+    // The port closes automatically when this window closes.
+    function startKeepAlive() {
+        var port = null;
+        function connect() {
+            try {
+                port = ext().runtime.connect({ name: "qc-approval" });
+                port.onDisconnect.addListener(function () {
+                    void ext().runtime.lastError; // swallow disconnect error
+                    port = null;
+                    // Chrome force-closes ports at ~5 min; reconnect to stay alive.
+                    setTimeout(connect, 100);
+                });
+            } catch (e) { port = null; }
+        }
+        connect();
+        // Ping well under the 30s idle window so the worker never goes idle.
+        setInterval(function () {
+            try { if (port) port.postMessage({ type: "ping" }); } catch (e) { /* reconnect via onDisconnect */ }
+        }, 20000);
+    }
+
     var REQUEST_ID = new URLSearchParams(location.search).get("requestId") || "";
     var currentNet = null;
     var pendingRequest = null;
@@ -1232,6 +1257,7 @@
 
     // ---- entry point -----------------------------------------------------
     async function initDappApproval() {
+        startKeepAlive();
         installErrorGuards();
         document.documentElement.setAttribute("data-view", "approval");
 
