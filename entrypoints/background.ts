@@ -579,6 +579,16 @@ export default defineBackground(() => {
 
   // Provider requests arrive over the long-lived relay port.
   ext.runtime.onConnect.addListener((port: any) => {
+    if (port?.name === "qc-approval") {
+      // Keep-alive channel held by an approval popup for its lifetime. An open
+      // port + periodic pings keep the service worker (and the in-memory pending
+      // map + relay port) alive through slow signing, so the result is still
+      // delivered when the popup broadcasts. No request logic here.
+      port.onMessage.addListener((m: any) => {
+        if (m && m.type === "ping") safePost(port, { type: "pong" });
+      });
+      return;
+    }
     if (port?.name !== "qc") return;
     ports.add(port);
     port.onMessage.addListener((msg: any) => {

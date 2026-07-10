@@ -9,6 +9,23 @@ WebAssembly SDK runs.
 - **UI surface:** toolbar popup (`action.default_popup`)
 - **Crypto:** the Go-compiled post-quantum WASM from `quantum-coin-js-sdk` runs directly in the popup
 
+## Table of contents
+
+- [Architecture](#architecture)
+  - [Why a separate esbuild step?](#why-a-separate-esbuild-step)
+- [Building a dApp](#building-a-dapp)
+- [Prerequisites](#prerequisites)
+- [Install](#install)
+- [Build](#build)
+- [Package](#package)
+- [Test in Chrome](#test-in-chrome)
+- [Test in Firefox](#test-in-firefox)
+- [Test the web3 dApp example page](#test-the-web3-dapp-example-page)
+- [Smoke-test checklist (both browsers)](#smoke-test-checklist-both-browsers)
+- [Icons](#icons)
+- [Dev/verification scripts](#devverification-scripts)
+- [Notes / known constraints](#notes--known-constraints)
+
 ## Architecture
 
 The desktop app has a clean split we exploit: the renderer only ever calls
@@ -64,6 +81,17 @@ not be transformed. WXT/Vite would try to bundle those. So the UI stays static i
 `public/`, and only the SDK/WASM bridge is bundled (by esbuild) into a single
 self-executing `public/platform-bridge.js`, which WXT then copies like any other
 static asset. This also cleanly injects the Node polyfills the SDKs need.
+
+## Building a dApp
+
+Websites can connect to the wallet through an Ethereum-like, EIP-1193-style
+provider injected at `window.quantumcoin` (for the QuantumCoin network, with
+32-byte addresses and `qc_*` methods). It lets a site connect an account, request
+signatures, send coins/tokens, deploy contracts, and read chain state — all with
+signing confined to the wallet's approval popups.
+
+**→ See the [dApp Developer Guide](README-DAPP.md)** for the full provider API,
+every supported method and event, and copy-paste examples.
 
 ## Prerequisites
 
@@ -146,6 +174,9 @@ The extension injects an EIP-1193-style provider (`window.quantumcoin`) into
 web pages via a content script, so sites can connect, request signatures, and
 send transactions through in-extension approval popups. `examples/dapp.html`
 is a self-contained test page for that flow.
+
+For building your own dApp against `window.quantumcoin`, see the
+[dApp Developer Guide](README-DAPP.md).
 
 Content scripts only run on `http(s)://` pages (not `file://`), so the example
 **must be served over HTTP**:

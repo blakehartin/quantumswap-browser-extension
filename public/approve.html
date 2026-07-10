@@ -32,7 +32,7 @@
             <div style="margin-bottom:10px;">
                 <div style="padding-bottom:20px;overflow:auto;"><p id="pDetails" class="scrollbar" tabindex="2"></p></div>
                 <div style="display:flex; justify-content:flex-end;">
-                    <button class="close" data-lang-key="ok" role="button" tabindex="1" id="divModalOk">Ok</button>
+                    <button class="close" data-lang-key="ok" role="button" tabindex="3" id="divModalOk">Ok</button>
                 </div>
             </div>
         </div>
@@ -47,8 +47,8 @@
                 <div style="display:flex; align-items:center; justify-content:space-between;">
                     <label data-lang-key="transaction-id" style="font-weight:bold;">Transaction ID</label>
                     <div style="display:flex; align-items:center; gap:12px;">
-                        <div class="copy-container" role="button" id="divSendCompletedCopy" title="Copy" tabindex="2"></div>
-                        <div class="scan-container" role="button" id="divSendCompletedExplorer" title="Block Explorer" tabindex="3"></div>
+                        <div class="copy-container" role="button" id="divSendCompletedCopy" title="Copy" tabindex="5"></div>
+                        <div class="scan-container" role="button" id="divSendCompletedExplorer" title="Block Explorer" tabindex="6"></div>
                     </div>
                 </div>
                 <p id="pSendCompletedTxHash" style="font-family:monospace; word-break:break-all; margin-top:4px;"></p>
@@ -58,7 +58,7 @@
                 </div>
             </div>
             <div style="margin-top:20px; display:flex; justify-content:flex-end;">
-                <button class="proceed" data-lang-key="ok" role="button" tabindex="1" id="btnSendCompletedOk">Ok</button>
+                <button class="proceed" data-lang-key="ok" role="button" tabindex="4" id="btnSendCompletedOk">Ok</button>
             </div>
         </div>
     </dialog>
@@ -70,15 +70,15 @@
             <h3 data-lang-key="gas" style="margin-top:0;">Gas</h3>
             <div class="input_container" style="margin-top:10px;">
                 <div class="heading medium" data-lang-key="gas-limit">Gas limit (gas-units)</div>
-                <input class="tab-name" type="number" min="0" step="1" id="txtGasLimit" style="text-align: left; width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 6px;" tabindex="1">
+                <input class="tab-name" type="number" min="0" step="1" id="txtGasLimit" style="text-align: left; width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 6px;" tabindex="7">
             </div>
             <div class="input_container" style="margin-top:10px;">
                 <div class="heading medium" data-lang-key="gas-fee">Estimated gas fee (coins)</div>
-                <input class="tab-name" type="text" id="txtGasFee" readonly style="text-align: left; width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 6px;" tabindex="2">
+                <input class="tab-name" type="text" id="txtGasFee" readonly style="text-align: left; width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 6px;" tabindex="8">
             </div>
             <div style="margin-top:20px; display:flex; gap:15px; justify-content:flex-end;">
-                <button class="cancel" data-lang-key="cancel" role="button" tabindex="4" id="btnGasConfigCancel">Cancel</button>
-                <button class="proceed" data-lang-key="ok" role="button" tabindex="3" id="btnGasConfigOk">Ok</button>
+                <button class="cancel" data-lang-key="cancel" role="button" tabindex="9" id="btnGasConfigCancel">Cancel</button>
+                <button class="proceed" data-lang-key="ok" role="button" tabindex="10" id="btnGasConfigOk">Ok</button>
             </div>
         </div>
     </dialog>
@@ -100,7 +100,7 @@
                     <div class="heading bold" id="dappTitle" data-lang-key="dapp-connect-title">Connect Wallet</div>
                     <div class="gas-header-right" id="dappGasHeaderRight" style="display:none;">
                         <span id="dappGasFee" class="gas-fee-label"></span>
-                        <div id="dappGasIcon" class="gas-container" role="button" tabindex="8"></div>
+                        <div id="dappGasIcon" class="gas-container" role="button" tabindex="11"></div>
                     </div>
                 </div>
                 <div class="divider"></div>
@@ -119,8 +119,8 @@
                 <div id="dappAccountRow" class="input_container" style="display:none; margin-top:12px;">
                     <div class="heading medium" data-lang-key="dapp-account" style="text-align:left;">Account</div>
                     <div style="display:flex; flex-direction:row; align-items:center; gap:15px; margin-top:4px;">
-                        <div class="copy-container" id="dappAccountCopy" role="button" tabindex="5" title="Copy address"></div>
-                        <div class="scan-container" id="dappAccountExplorer" role="button" tabindex="6" title="Open in block explorer"></div>
+                        <div class="copy-container" id="dappAccountCopy" role="button" tabindex="12" title="Copy address"></div>
+                        <div class="scan-container" id="dappAccountExplorer" role="button" tabindex="13" title="Open in block explorer"></div>
                     </div>
                     <div id="dappAccountAddress" style="font-size:0.78em; word-break:break-all; text-align:left; margin-top:6px; color:#000;"></div>
                 </div>
@@ -129,8 +129,8 @@
                 <div id="dappConnectScreen" class="input_container" style="display:none; margin-top:12px;">
                     <div class="heading medium" data-lang-key="dapp-account" style="text-align:left;">Account</div>
                     <div style="display:flex; flex-direction:row; align-items:center; gap:15px; margin-top:4px;">
-                        <div class="copy-container" id="dappCopyAddr" role="button" tabindex="5" title="Copy address"></div>
-                        <div class="scan-container" id="dappExplorerAddr" role="button" tabindex="6" title="Open in block explorer"></div>
+                        <div class="copy-container" id="dappCopyAddr" role="button" tabindex="14" title="Copy address"></div>
+                        <div class="scan-container" id="dappExplorerAddr" role="button" tabindex="15" title="Open in block explorer"></div>
                     </div>
                     <div id="dappSelectedAddress" style="font-size:0.78em; word-break:break-all; text-align:left; margin-top:6px; color:#000;"></div>
                     <select id="dappAccountSelect" style="display:none; width:100%; padding:4px; margin-top:6px; background:transparent; border:1px solid #ccc; border-radius:6px; font-size:0.8em; color:black;"></select>
@@ -167,7 +167,7 @@
 
                 <div id="dappIAgreeRow" style="display:none; margin-top:8px; text-align:left;">
                     <label data-lang-key="type-i-agree-to-confirm">Type </label> <span style="color:blue" data-lang-key="i-agree-literal">i agree</span><label data-lang-key="type-i-agree-to-confirm-suffix"> to confirm:</label>
-                    <input type="text" style="width:63px;font-size:16px;border-radius:10px;border:1px solid;padding:3px;" id="txtDappIAgree" tabindex="7" autocomplete="off" />
+                    <input type="text" style="width:63px;font-size:16px;border-radius:10px;border:1px solid;padding:3px;" id="txtDappIAgree" tabindex="16" autocomplete="off" />
                 </div>
                 <div class="divider"></div>
                 <div class="input_container" id="dappPasswordRow">
@@ -175,10 +175,10 @@
                     <div style="width:100%;">
                         <div style="float: left; width: 80%;">
                             <input class="tab-name" style="text-align: left; width: 100%; border: none; outline: none; font-weight: 500; color: black; letter-spacing: 0.11em;"
-                                   type="password" autocomplete="off" id="dappPassword" name="password" data-placeholder-key="dapp-password-placeholder" placeholder="Enter your wallet password" tabindex="1">
+                                   type="password" autocomplete="off" id="dappPassword" name="password" data-placeholder-key="dapp-password-placeholder" placeholder="Enter your wallet password" tabindex="17">
                         </div>
                         <div style="float:left;">
-                            <img src="assets/svg/eye-outline.svg" alt="Show Password" data-alt-key="show-password" id="dappPwdEye" style="cursor:pointer;width:20px;" role="button" tabindex="2" />
+                            <img src="assets/svg/eye-outline.svg" alt="Show Password" data-alt-key="show-password" id="dappPwdEye" style="cursor:pointer;width:20px;" role="button" tabindex="18" />
                         </div>
                     </div>
                     <div class="divider"></div>
@@ -187,8 +187,8 @@
                 <div id="dappStatus" class="heading medium" style="margin-top:8px; color:#b00020; text-align:left;"></div>
 
                 <div style="display:flex; justify-content:flex-end; gap:15px; margin-top:12px;">
-                    <button class="cancel" id="dappRejectBtn" data-lang-key="dapp-reject" role="button" tabindex="4">Reject</button>
-                    <button class="large_button_container heading large" id="dappApproveBtn" data-lang-key="dapp-approve" role="button" tabindex="3">Approve</button>
+                    <button class="cancel" id="dappRejectBtn" data-lang-key="dapp-reject" role="button" tabindex="19">Reject</button>
+                    <button class="large_button_container heading large" id="dappApproveBtn" data-lang-key="dapp-approve" role="button" tabindex="20">Approve</button>
                 </div>
             </div>
         </div>
