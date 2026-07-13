@@ -273,10 +273,6 @@
                     <img class="tab-icon" src="assets/svg/settings.svg" alt="Settings Icon">
                     <div class="tab-name" data-lang-key="settings">Settings</div>
                 </div>
-                <div class="burger-item disabled" id="tab5" role="button" tabindex="16" onclick="closeBurgerMenu(); return showReleasesScreen();">
-                    <img class="tab-icon" src="assets/svg/release-tag.svg" alt="Releases Icon">
-                    <div class="tab-name" data-lang-key="releases">Releases</div>
-                </div>
             </div>
         </div>
         <div class="dropdown" onclick="return showNetworkDialog();" id="divNetworkDropdown" role="button" tabindex="1000" style="display:none;">
@@ -1946,6 +1942,10 @@
                                     <a href="#" onclick="return showAdvancedSigningSettingDialog();" data-lang-key="signing" tabindex="4003">Signing</a>
                                 </div>
                                 <div class="divider"></div>
+                                <div class="vertical-menu-item">
+                                    <a href="#" onclick="return showReleasesScreen();" data-lang-key="releases" tabindex="4004">Releases</a>
+                                </div>
+                                <div class="divider"></div>
                             </div>
                         </div>
                     </div>
@@ -2027,7 +2027,7 @@
         <div class="content" id="releaseListScreen" style="display: none;">
             <div class="center-content">
                 <div class="center-content-rounded-container">
-                    <div class="back-container" role="button" onclick="showWalletScreen()" tabindex="3">
+                    <div class="back-container" role="button" onclick="showSettingsScreen()" tabindex="3">
 
                     </div>
                     <div class="roundex-box" style="padding-top: 15px; padding-bottom: 15px;">
