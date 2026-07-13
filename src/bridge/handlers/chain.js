@@ -17,6 +17,7 @@ import {
   QuantumSwapV2Factory,
   IERC20,
 } from "quantumswap";
+import { RECOGNIZED_TOKEN_CONTRACT_ADDRESSES } from "../token-constants.js";
 
 function signingOverrides(wallet, data, base) {
   const fullSign = data && data.advancedSigningEnabled === true;
@@ -43,6 +44,152 @@ const SWAP_FACTORY_CONTRACT_ADDRESS =
   "0xbbF45a1B60044669793B444eD01Eb33e03Bb8cf3c5b6ae7887B218D05C5Cbf1d";
 const SWAP_ROUTER_V2_CONTRACT_ADDRESS =
   "0x41323EF72662185f44a03ea0ad8094a0C9e925aB1102679D8e957e838054aac5";
+
+// ---- Multi-hop swap routing ----
+// When no direct pair exists between the two tokens, a route is searched through
+// these intermediate hop candidates (wrapped Q + the recognized tokens from
+// src/bridge/token-constants.js), with at most SWAP_MAX_INTERMEDIATE_HOPS tokens
+// between the from- and to-token.
+const SWAP_MAX_INTERMEDIATE_HOPS = 3;
+const SWAP_HOP_CANDIDATE_ADDRESSES = [
+  SWAP_WQ_CONTRACT_ADDRESS,
+  ...RECOGNIZED_TOKEN_CONTRACT_ADDRESSES,
+];
+
+const SWAP_NO_ROUTE_ERROR =
+  "No swap route exists between these two tokens: no direct pair and no route through intermediate tokens (max 3 hops).";
+
+// Route + symbol caches. Pairs rarely change, so a short TTL avoids re-querying
+// the factory on every debounced quote / gas-estimate while a swap is being set up.
+const SWAP_ROUTE_CACHE_TTL_MS = 60000;
+const swapRouteCache = new Map();
+const swapPathSymbolCache = new Map();
+
+function mapSwapTokenValue(value) {
+  return value === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : value;
+}
+
+async function factoryPairExists(factory, tokenA, tokenB) {
+  const pairAddr = await factory.getPair(tokenA, tokenB);
+  const pairAddrStr =
+    typeof pairAddr === "string"
+      ? pairAddr
+      : pairAddr && pairAddr.toString
+        ? pairAddr.toString()
+        : String(pairAddr);
+  const zeroAddr =
+    ZeroAddress || "0x0000000000000000000000000000000000000000000000000000000000000000";
+  return !!(pairAddrStr && pairAddrStr !== zeroAddr && pairAddrStr !== "0x" + "0".repeat(64));
+}
+
+// Find a router path from `fromAddrRaw` to `toAddrRaw`: the direct pair when it
+// exists, otherwise the shortest route (BFS) through the hop candidates, limited
+// to SWAP_MAX_INTERMEDIATE_HOPS intermediate tokens. Returns an array of
+// checksummed addresses ([from, ...hops, to]) or null when no route exists.
+async function findSwapPath(provider, chainId, fromAddrRaw, toAddrRaw) {
+  const fromAddr = getAddress(fromAddrRaw);
+  const toAddr = getAddress(toAddrRaw);
+  const cacheKey = chainId + "|" + fromAddr.toLowerCase() + "|" + toAddr.toLowerCase();
+  const cached = swapRouteCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SWAP_ROUTE_CACHE_TTL_MS) return cached.path;
+
+  const factory = QuantumSwapV2Factory.connect(SWAP_FACTORY_CONTRACT_ADDRESS, provider);
+  let path = null;
+  if (await factoryPairExists(factory, fromAddr, toAddr)) {
+    path = [fromAddr, toAddr];
+  } else {
+    const seen = new Set([fromAddr.toLowerCase(), toAddr.toLowerCase()]);
+    const hops = [];
+    for (const h of SWAP_HOP_CANDIDATE_ADDRESSES) {
+      const addr = getAddress(h);
+      if (seen.has(addr.toLowerCase())) continue;
+      seen.add(addr.toLowerCase());
+      hops.push(addr);
+    }
+    const nodes = [fromAddr, ...hops, toAddr];
+    const target = nodes.length - 1;
+    // Query every remaining pair among the nodes in parallel (the direct
+    // from->to pair was already checked above), then BFS the pair graph.
+    const adj = nodes.map(() => []);
+    const checks = [];
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        if (i === 0 && j === target) continue;
+        checks.push(
+          factoryPairExists(factory, nodes[i], nodes[j]).then((exists) => {
+            if (exists) {
+              adj[i].push(j);
+              adj[j].push(i);
+            }
+          }),
+        );
+      }
+    }
+    await Promise.all(checks);
+
+    const maxEdges = SWAP_MAX_INTERMEDIATE_HOPS + 1;
+    const prev = new Array(nodes.length).fill(-1);
+    const depth = new Array(nodes.length).fill(-1);
+    depth[0] = 0;
+    const queue = [0];
+    while (queue.length) {
+      const cur = queue.shift();
+      if (cur === target) break;
+      if (depth[cur] >= maxEdges) continue;
+      for (const nxt of adj[cur]) {
+        if (depth[nxt] !== -1) continue;
+        depth[nxt] = depth[cur] + 1;
+        prev[nxt] = cur;
+        queue.push(nxt);
+      }
+    }
+    if (depth[target] !== -1 && depth[target] <= maxEdges) {
+      const idxPath = [];
+      for (let cur = target; cur !== -1; cur = prev[cur]) idxPath.unshift(cur);
+      path = idxPath.map((i) => nodes[i]);
+    }
+  }
+
+  if (swapRouteCache.size > 200) {
+    swapRouteCache.delete(swapRouteCache.keys().next().value);
+  }
+  swapRouteCache.set(cacheKey, { path, at: Date.now() });
+  return path;
+}
+
+// Resolve the router path for a swap between two UI token values ("Q" or a
+// contract address). Throws when no route exists so callers surface the error.
+async function resolveSwapPath(provider, chainId, fromTokenValue, toTokenValue) {
+  const path = await findSwapPath(
+    provider,
+    chainId,
+    mapSwapTokenValue(fromTokenValue),
+    mapSwapTokenValue(toTokenValue),
+  );
+  if (!path) throw new Error(SWAP_NO_ROUTE_ERROR);
+  return path;
+}
+
+// On-chain symbol() for each path token, for the UI's route display. A failed
+// lookup yields null for that entry (the UI falls back to the address). The raw
+// symbol strings are untrusted RPC data: the UI must sanitize before rendering.
+async function getSwapPathSymbols(provider, chainId, path) {
+  return Promise.all(
+    path.map(async (addr) => {
+      const key = chainId + "|" + addr.toLowerCase();
+      if (swapPathSymbolCache.has(key)) return swapPathSymbolCache.get(key);
+      let symbol = null;
+      try {
+        const s = await IERC20.connect(addr, provider).symbol();
+        if (typeof s === "string" && s.trim() !== "") symbol = s;
+      } catch (e) {
+        /* leave null */
+      }
+      swapPathSymbolCache.set(key, symbol);
+      return symbol;
+    }),
+  );
+}
 
 // Browsers can only reach RPC over HTTP(S); the desktop's local IPC/pipe support
 // (isIpcLikeRpc/toNodeIpcPath/expandTildeInIpcPath) is intentionally dropped.
@@ -292,9 +439,7 @@ async function buildEstimateGasTx(data, provider) {
 
   if (txKind === "swap") {
     const router = QuantumSwapV2Router02.connect(SWAP_ROUTER_V2_CONTRACT_ADDRESS, provider);
-    const fromAddr = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-    const toAddr = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-    const path = [getAddress(fromAddr), getAddress(toAddr)];
+    const path = await resolveSwapPath(provider, chainId, data.fromTokenValue, data.toTokenValue);
     const fromDecimals = typeof data.fromDecimals === "number" ? data.fromDecimals : 18;
     const toDecimals = typeof data.toDecimals === "number" ? data.toDecimals : 18;
     const toAddress = data.recipientAddress || data.toAddress;
@@ -343,9 +488,7 @@ export default {
       await Initialize(new Config(chainId, initRpcUrlForConfig(data.rpcEndpoint)));
       const router = QuantumSwapV2Router02.connect(SWAP_ROUTER_V2_CONTRACT_ADDRESS, provider);
 
-      const fromAddr = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-      const toAddr = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-      const path = [getAddress(fromAddr), getAddress(toAddr)];
+      const path = await resolveSwapPath(provider, chainId, data.fromTokenValue, data.toTokenValue);
 
       const fromDecimals = typeof data.fromDecimals === "number" ? data.fromDecimals : 18;
       const toDecimals = typeof data.toDecimals === "number" ? data.toDecimals : 18;
@@ -361,37 +504,33 @@ export default {
     }
   },
 
+  // Route check: `exists` is true when a direct pair OR a multi-hop route (max
+  // SWAP_MAX_INTERMEDIATE_HOPS intermediates) exists. `path` is the address route
+  // and `pathSymbols` the on-chain symbol for each path token (null entries when
+  // the lookup failed). Symbols are untrusted; the UI sanitizes before display.
   async SwapQuoteCheckPairExists(data) {
     try {
       const chainId = Number(data.chainId);
-      if (!Number.isInteger(chainId)) return { exists: false, error: "Invalid chain ID" };
+      if (!Number.isInteger(chainId))
+        return { exists: false, path: null, pathSymbols: null, error: "Invalid chain ID" };
 
       const provider = createQuantumRpcProvider(data.rpcEndpoint, chainId);
-      if (!provider) return { exists: false, error: "Invalid RPC endpoint" };
+      if (!provider)
+        return { exists: false, path: null, pathSymbols: null, error: "Invalid RPC endpoint" };
 
       await Initialize(new Config(chainId, initRpcUrlForConfig(data.rpcEndpoint)));
-      const factory = QuantumSwapV2Factory.connect(SWAP_FACTORY_CONTRACT_ADDRESS, provider);
-
-      const tokenA = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-      const tokenB = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-      const pairAddr = await factory.getPair(getAddress(tokenA), getAddress(tokenB));
-      const pairAddrStr =
-        typeof pairAddr === "string"
-          ? pairAddr
-          : pairAddr && pairAddr.toString
-            ? pairAddr.toString()
-            : String(pairAddr);
-      const zeroAddr =
-        ZeroAddress || "0x0000000000000000000000000000000000000000000000000000000000000000";
-      const exists = !!(
-        pairAddrStr &&
-        pairAddrStr !== zeroAddr &&
-        pairAddrStr !== "0x" + "0".repeat(64)
+      const path = await findSwapPath(
+        provider,
+        chainId,
+        mapSwapTokenValue(data.fromTokenValue),
+        mapSwapTokenValue(data.toTokenValue),
       );
+      if (!path) return { exists: false, path: null, pathSymbols: null, error: null };
 
-      return { exists, error: null };
+      const pathSymbols = await getSwapPathSymbols(provider, chainId, path);
+      return { exists: true, path, pathSymbols, error: null };
     } catch (err) {
-      return { exists: false, error: sanitizeSwapError(err) };
+      return { exists: false, path: null, pathSymbols: null, error: sanitizeSwapError(err) };
     }
   },
 
@@ -406,9 +545,7 @@ export default {
       await Initialize(new Config(chainId, initRpcUrlForConfig(data.rpcEndpoint)));
       const router = QuantumSwapV2Router02.connect(SWAP_ROUTER_V2_CONTRACT_ADDRESS, provider);
 
-      const fromAddr = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-      const toAddr = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-      const path = [getAddress(fromAddr), getAddress(toAddr)];
+      const path = await resolveSwapPath(provider, chainId, data.fromTokenValue, data.toTokenValue);
 
       const fromDecimals = typeof data.fromDecimals === "number" ? data.fromDecimals : 18;
       const toDecimals = typeof data.toDecimals === "number" ? data.toDecimals : 18;
@@ -436,9 +573,7 @@ export default {
       await Initialize(new Config(chainId, initRpcUrlForConfig(data.rpcEndpoint)));
       const router = QuantumSwapV2Router02.connect(SWAP_ROUTER_V2_CONTRACT_ADDRESS, provider);
 
-      const fromAddr = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-      const toAddr = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-      const path = [getAddress(fromAddr), getAddress(toAddr)];
+      const path = await resolveSwapPath(provider, chainId, data.fromTokenValue, data.toTokenValue);
       const fromDecimals = typeof data.fromDecimals === "number" ? data.fromDecimals : 18;
       const toDecimals = typeof data.toDecimals === "number" ? data.toDecimals : 18;
       const toAddress = data.recipientAddress || data.toAddress;
@@ -640,9 +775,7 @@ export default {
       await Initialize(new Config(chainId, initRpcUrlForConfig(data.rpcEndpoint)));
       const router = QuantumSwapV2Router02.connect(SWAP_ROUTER_V2_CONTRACT_ADDRESS, provider);
 
-      const fromAddr = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-      const toAddr = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-      const path = [getAddress(fromAddr), getAddress(toAddr)];
+      const path = await resolveSwapPath(provider, chainId, data.fromTokenValue, data.toTokenValue);
       const fromDecimals = typeof data.fromDecimals === "number" ? data.fromDecimals : 18;
       const toDecimals = typeof data.toDecimals === "number" ? data.toDecimals : 18;
       const deadline = await getSwapTxDeadline(provider, 1200);
@@ -731,9 +864,7 @@ export default {
       const wallet = Wallet.fromKeys(privBytes, pubBytes, provider);
 
       const router = QuantumSwapV2Router02.connect(SWAP_ROUTER_V2_CONTRACT_ADDRESS, wallet);
-      const fromAddr = data.fromTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.fromTokenValue;
-      const toAddr = data.toTokenValue === "Q" ? SWAP_WQ_CONTRACT_ADDRESS : data.toTokenValue;
-      const path = [getAddress(fromAddr), getAddress(toAddr)];
+      const path = await resolveSwapPath(provider, chainId, data.fromTokenValue, data.toTokenValue);
       const fromDecimals = typeof data.fromDecimals === "number" ? data.fromDecimals : 18;
       const toDecimals = typeof data.toDecimals === "number" ? data.toDecimals : 18;
       const deadline = await getSwapTxDeadline(provider, 1200);

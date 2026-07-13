@@ -7,6 +7,7 @@
 // local in-page handler registry (dispatch) instead of ipcRenderer.invoke.
 import { dispatch } from "./dispatch.js";
 import { Initialize } from "quantumcoin/config";
+import { RECOGNIZED_TOKEN_CONTRACT_ADDRESSES } from "./token-constants.js";
 
 const noop = () => {};
 
@@ -14,6 +15,11 @@ const noop = () => {};
 function makeApi() {
   return { send: (channel, data) => dispatch(channel, data), handle: noop };
 }
+
+// Single-source token constants (src/bridge/token-constants.js). This bundle is
+// the first classic script in index.html, so the list exists before
+// js/tokenfilter.js (and every other UI script) runs.
+window.RECOGNIZED_TOKEN_CONTRACT_ADDRESSES = RECOGNIZED_TOKEN_CONTRACT_ADDRESSES;
 
 // APIs that were exposed via contextBridge in the desktop preload.js.
 window.CryptoApi = makeApi();

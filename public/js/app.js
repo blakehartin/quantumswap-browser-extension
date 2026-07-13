@@ -2204,6 +2204,70 @@ function getSwapCachedSymbol(value) {
     return swapTokenSymbolCache[value] != null ? swapTokenSymbolCache[value] : getSwapSymbolFromValue(value);
 }
 
+// ---- Multi-hop swap route display ----
+// Current route as returned by the route check: array of { address, symbol }.
+var swapCurrentRoute = null;
+var SWAP_ROUTE_SYMBOL_MAX_LENGTH = 12;
+
+// Display text for one route token. Prefers the wallet's own (already filtered)
+// symbol; otherwise the on-chain symbol returned by the route check. Both are
+// untrusted, so the value is length-capped and rejected when it contains
+// HTML-special or spoofing Unicode characters; the fallback is the shortened
+// contract address. Rendered via textContent only (never innerHTML).
+function getSwapRouteDisplaySymbol(address, symbol) {
+    var addrLower = String(address || "").toLowerCase();
+    var candidate = null;
+    if (currentWalletTokenList != null) {
+        for (var i = 0; i < currentWalletTokenList.length; i++) {
+            var t = currentWalletTokenList[i];
+            if (t.contractAddress && String(t.contractAddress).toLowerCase() === addrLower && t.symbol) {
+                candidate = t.symbol;
+                break;
+            }
+        }
+    }
+    if (candidate == null && symbol != null) candidate = symbol;
+    if (candidate != null) {
+        var s = String(candidate).substring(0, SWAP_ROUTE_SYMBOL_MAX_LENGTH).trim();
+        if (s !== "" && htmlEncode(s) === s && !containsUnsafeDisplayText(s)) {
+            return s;
+        }
+    }
+    var addr = String(address || "");
+    return addr.length >= 12 ? addr.substring(0, 6) + "..." + addr.slice(-4) : addr;
+}
+
+function updateSwapRoutePathDisplay(route) {
+    swapCurrentRoute = (route && route.length >= 2) ? route : null;
+    var container = document.getElementById("divSwapRoutePath");
+    var span = document.getElementById("spanSwapRoutePath");
+    if (!container || !span) return;
+    if (!swapCurrentRoute) {
+        span.textContent = "";
+        container.style.display = "none";
+        return;
+    }
+    var parts = [];
+    for (var i = 0; i < swapCurrentRoute.length; i++) {
+        parts.push(getSwapRouteDisplaySymbol(swapCurrentRoute[i].address, swapCurrentRoute[i].symbol));
+    }
+    span.textContent = parts.join(" -> ");
+    container.style.display = "block";
+}
+
+// Build the { address, symbol } route list from a SwapQuoteCheckPairExists result.
+function buildSwapRouteFromCheckResult(result) {
+    if (!result || result.exists !== true || !result.path || result.path.length < 2) return null;
+    var route = [];
+    for (var i = 0; i < result.path.length; i++) {
+        route.push({
+            address: result.path[i],
+            symbol: (result.pathSymbols && result.pathSymbols[i] != null) ? result.pathSymbols[i] : null
+        });
+    }
+    return route;
+}
+
 var swapQuantityUpdating = false;
 var swapQuoteFromDebounceId = null;
 var swapLastChanged = 'from'; // 'from' | 'to' - which quantity the user last edited
@@ -2360,9 +2424,11 @@ function debouncedUpdateFromQuantityFromTo() {
 }
 
 async function updateSwapScreenInfo() {
-    // Runs when either "from" or "to" token dropdown is changed. Check pair and show same error if pair doesn't exist.
+    // Runs when either "from" or "to" token dropdown is changed. Find a swap route
+    // (direct pair or multi-hop) and show an error when no route exists.
     document.getElementById("txtSwapFromQuantity").value = "";
     document.getElementById("txtSwapToQuantity").value = "";
+    updateSwapRoutePathDisplay(null);
     updateSwapBalanceLabels();
     var fromValue = document.getElementById("ddlSwapFromToken").value;
     var toValue = document.getElementById("ddlSwapToToken").value;
@@ -2380,11 +2446,13 @@ async function updateSwapScreenInfo() {
         };
         var result = await getSwapCheckPairExists(payload);
         pairExists = result && result.exists === true;
-        if (!pairExists) {
+        if (pairExists) {
+            updateSwapRoutePathDisplay(buildSwapRouteFromCheckResult(result));
+        } else {
             if (result && result.error) {
                 showWarnAlert(result.error);
             } else {
-                showWarnAlert((langJson && langJson.langValues && langJson.langValues["swap-no-pair"]) || "No pair has been created for these two tokens");
+                showWarnAlert((langJson && langJson.langValues && langJson.langValues["swap-no-pair"]) || "No swap route exists between these two tokens (max 3 hops)");
             }
             document.getElementById("txtSwapToQuantity").value = "";
         }
@@ -2417,6 +2485,7 @@ function openSwapScreen() {
     populateSwapTokenDropdowns();
     document.getElementById("txtSwapFromQuantity").value = "";
     document.getElementById("txtSwapToQuantity").value = "";
+    updateSwapRoutePathDisplay(null);
     document.getElementById("txtSwapFromQuantity").focus();
     updateSwapBalanceLabels();
     resetCurrentGasConfig();
@@ -2860,6 +2929,7 @@ async function onSwapNextClick() {
         var result = await getSwapCheckPairExists(payload);
         pairExists = result && result.exists === true;
         if (!pairExists) {
+            updateSwapRoutePathDisplay(null);
             if (result && result.error) {
                 showWarnAlert(result.error);
             } else {
@@ -2867,6 +2937,7 @@ async function onSwapNextClick() {
             }
             return false;
         }
+        updateSwapRoutePathDisplay(buildSwapRouteFromCheckResult(result));
     } catch (e) {
         showWarnAlert((e && e.message) ? e.message : String(e));
         return false;
@@ -3307,8 +3378,17 @@ function showSwapExecuteConfirmDialog() {
     var toAmt = (document.getElementById("txtSwapToQuantity").value || "").trim();
     function sym(v) { return v === "Q" ? "Q" : (String(v).length > 10 ? String(v).slice(0, 6) + "..." + String(v).slice(-4) : v); }
     var resolved = resolveGasForTx(SWAP_DEFAULT_GAS);
+    // Show the full multi-hop route when one was resolved, otherwise from -> to.
+    var assetText = sym(fromValue) + " -> " + sym(toValue);
+    if (swapCurrentRoute && swapCurrentRoute.length >= 2) {
+        var routeParts = [];
+        for (var ri = 0; ri < swapCurrentRoute.length; ri++) {
+            routeParts.push(getSwapRouteDisplaySymbol(swapCurrentRoute[ri].address, swapCurrentRoute[ri].symbol));
+        }
+        assetText = routeParts.join(" -> ");
+    }
     var review = {
-        asset: sym(fromValue) + " -> " + sym(toValue),
+        asset: assetText,
         contractAddress: getSwapContractAddress(fromValue),
         toAddress: currentWalletAddress,
         quantityLabelKey: "send-quantity",
