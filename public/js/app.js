@@ -2394,11 +2394,23 @@ function applySwapReleaseToPayload(payload) {
 var swapCurrentRoute = null;
 var SWAP_ROUTE_SYMBOL_MAX_LENGTH = 12;
 
+// Sanitize an untrusted token symbol for display: strip spoofing Unicode
+// (bidi/zero-width/control, same set as containsUnsafeDisplayText) and
+// HTML-special characters (harmless via textContent, removed for defense in
+// depth), then cap the length. Returns "" when nothing displayable remains.
+function sanitizeSwapSymbolForDisplay(raw) {
+    if (raw == null) return "";
+    var s = String(raw)
+        .replace(/[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060\uFEFF\u0000-\u001F\u007F-\u009F]/g, "")
+        .replace(/[<>&"'`]/g, "");
+    return s.substring(0, SWAP_ROUTE_SYMBOL_MAX_LENGTH).trim();
+}
+
 // Display text for one route token. Prefers the wallet's own (already filtered)
 // symbol; otherwise the on-chain symbol returned by the route check. Both are
-// untrusted, so the value is length-capped and rejected when it contains
-// HTML-special or spoofing Unicode characters; the fallback is the shortened
-// contract address. Rendered via textContent only (never innerHTML).
+// untrusted, so the value is sanitized (spoofing/HTML-special characters
+// stripped, length-capped); only when no displayable symbol remains does the
+// shortened contract address appear. Rendered via textContent only.
 function getSwapRouteDisplaySymbol(address, symbol) {
     var addrLower = String(address || "").toLowerCase();
     var candidate = null;
@@ -2412,12 +2424,8 @@ function getSwapRouteDisplaySymbol(address, symbol) {
         }
     }
     if (candidate == null && symbol != null) candidate = symbol;
-    if (candidate != null) {
-        var s = String(candidate).substring(0, SWAP_ROUTE_SYMBOL_MAX_LENGTH).trim();
-        if (s !== "" && htmlEncode(s) === s && !containsUnsafeDisplayText(s)) {
-            return s;
-        }
-    }
+    var s = sanitizeSwapSymbolForDisplay(candidate);
+    if (s !== "") return s;
     var addr = String(address || "");
     return addr.length >= 12 ? addr.substring(0, 6) + "..." + addr.slice(-4) : addr;
 }
@@ -3563,7 +3571,10 @@ function showSwapExecuteConfirmDialog() {
     var toValue = document.getElementById("ddlSwapToToken").value;
     var fromAmt = (document.getElementById("txtSwapFromQuantity").value || "").trim();
     var toAmt = (document.getElementById("txtSwapToQuantity").value || "").trim();
-    function sym(v) { return v === "Q" ? "Q" : (String(v).length > 10 ? String(v).slice(0, 6) + "..." + String(v).slice(-4) : v); }
+    // Dropdown values are "Q" or a token contract address; show the (sanitized)
+    // token symbol, falling back to the shortened address only when no symbol
+    // is available.
+    function sym(v) { return v === "Q" ? "Q" : getSwapRouteDisplaySymbol(v, null); }
     var resolved = resolveGasForTx(SWAP_DEFAULT_GAS);
     // Show the full multi-hop route when one was resolved, otherwise from -> to.
     var assetText = sym(fromValue) + " -> " + sym(toValue);

@@ -212,7 +212,9 @@ async function getSwapPathSymbols(provider, chainId, path) {
       } catch (e) {
         /* leave null */
       }
-      swapPathSymbolCache.set(key, symbol);
+      // Cache only successful lookups: a transient RPC failure must not pin the
+      // null (address-fallback) display for the rest of the session.
+      if (symbol != null) swapPathSymbolCache.set(key, symbol);
       return symbol;
     }),
   );
