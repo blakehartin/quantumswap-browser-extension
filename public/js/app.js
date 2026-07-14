@@ -232,7 +232,7 @@ function resizeBoxes() {
         maxHeightMiddle = "400px";
         tokensMaxHeight = "150px";
     } else if(screen.height >= 1024) {
-        maxHeight = "520px";
+        maxHeight = "560px";
         maxHeightMiddle = "550px";
         tokensMaxHeight = "295px";
     } else if(screen.height >= 960) {
@@ -971,7 +971,7 @@ async function showWalletScreen() {
     document.getElementById('ReceiveScreen').style.display = 'none';
     document.getElementById('TransactionsScreen').style.display = 'none';
 
-    document.getElementById('gradient').style.height = '224px';
+    document.getElementById('gradient').style.height = '200px';
     document.getElementById('walletAddress').textContent = currentWalletAddress;
 
     resizeBoxes();
