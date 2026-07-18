@@ -50,15 +50,24 @@ a copy-paste example, and there is a runnable reference page at
   injects a provider object at `window.quantumcoin` into every `http(s)://` page.
 - Your page calls `window.quantumcoin.request(...)`. Read calls are answered
   immediately; anything that needs the user's approval (connecting, signing,
-  sending) opens a focused **wallet approval popup**.
-- The user reviews and confirms in that popup (entering their password). Your
-  page never sees the password or the private keys.
+  sending) opens the **wallet approval flow**.
+- Approvals render inside the browser **side panel** (Chrome) / **sidebar**
+  (Firefox) — UI a web page cannot spoof. If the panel is closed, a small
+  popup asks the user to open it (on Firefox with the sidebar closed, the
+  approval renders in the popup itself).
+- Before the request details appear, the wallet shows the user their personal
+  **Spoof Buster words** — an anti-phishing check that a fake approval window
+  cannot reproduce. Occasionally (about 1 in 10) this is a **training round**
+  that automatically rejects the request to keep the user sharp; see
+  [Error handling](#error-handling).
+- The user reviews and confirms (entering their password). Your page never sees
+  the password or the private keys.
 - The result (an address, a signature, a transaction hash, ...) is returned to
   your `request(...)` promise, and follow-up **events** (like a mined
   transaction) are delivered to your `provider.on(...)` listeners.
 
 ```
-your page  --request()-->  window.quantumcoin  --->  extension  --->  approval popup (user confirms)
+your page  --request()-->  window.quantumcoin  --->  extension  --->  side-panel approval (user confirms)
    ^                                                                   |
    +----------------------- result / events --------------------------+
 ```
@@ -189,14 +198,18 @@ provider.on("accountsChanged", (accounts) => console.log("accounts:", accounts))
 ## Method reference
 
 Every method is called via `provider.request({ method, params })`. Methods that
-require the user are noted; they open the approval popup and reject with
-`User rejected the request` if the user closes it without approving.
+require the user are noted; they open the approval flow (hosted in the browser
+side panel) and reject with `User rejected the request` if the user closes it
+without approving. Be aware that about 1 in 10 approvals is an anti-phishing
+**training round** that rejects the request automatically — your dApp should
+treat any rejection as retryable (show a "try again" affordance rather than a
+hard failure).
 
 ### qc_requestAccounts
 
-Connect the site and get the active account. Opens the approval popup the first
-time (the user picks an account and approves); afterwards returns the connected
-account without a popup.
+Connect the site and get the active account. Opens the approval flow the first
+time (the user picks an account and approves in the side panel); afterwards
+returns the connected account without any prompt.
 
 - **Params:** none.
 - **Returns:** `string[]` — an array with the connected address, e.g.
@@ -256,7 +269,7 @@ console.log(net.name, net.chainId, net.blockExplorerDomain);
 
 ### qc_signMessage
 
-Sign an arbitrary text message. **Requires connection.** Opens the approval popup.
+Sign an arbitrary text message. **Requires connection.** Opens the approval flow.
 
 - **Params:** `{ message: string }` — must be a non-empty string.
 - **Returns:** `string` — the signature (`0x...`).
@@ -271,7 +284,7 @@ const signature = await provider.request({
 ### qc_sendTransaction
 
 The general-purpose transaction method: call a contract method or **deploy** a
-contract. **Requires connection.** Opens the approval popup.
+contract. **Requires connection.** Opens the approval flow.
 
 - **Params:**
   - `to?: string` — target contract/account. **Omit `to` to deploy** a contract.
@@ -391,7 +404,9 @@ await provider.request({ method: "qc_disconnect" });
 Standard Ethereum **read** methods are forwarded to the QuantumCoin node so you
 can query chain state through the same provider. These require a **connected
 site** (so the wallet knows which network's node to use) and take a **positional
-array** of params. They do not open a popup.
+array** of params. They do not open an approval. They are **rate-limited per
+origin** (100 requests per 10 seconds) and request bodies are capped at 64 kB,
+so batch or debounce heavy polling.
 
 Supported (allowlisted) read methods include:
 
@@ -442,7 +457,7 @@ Subscribe with `provider.on(event, handler)`.
 | `accountsChanged` | `string[]` (`[address]` or `[]`) | The active account changes, or the site is disconnected (`[]`). |
 | `chainChanged` | `string` (hex chain id, e.g. `"0x1e0f3"`) | The wallet switches networks. |
 | `disconnect` | `{}` | The site is disconnected. |
-| `transactionResult` | `{ txHash: string, status: "succeeded" \| "failed" \| "timeout" }` | After a send is broadcast and the wallet finishes polling for confirmation. Fires even if the approval popup was closed right after signing. |
+| `transactionResult` | `{ txHash: string, status: "succeeded" \| "failed" \| "timeout" }` | After a send is broadcast and the wallet finishes polling for confirmation. Fires even if the approval surface was closed right after signing. |
 
 ```js
 provider.on("connect",         (info)     => console.log("connected, chainId:", info.chainId));
@@ -553,9 +568,14 @@ Common messages:
 
 | Message | Meaning |
 | --- | --- |
-| `User rejected the request` | The user closed the approval popup without approving. |
+| `User rejected the request` | The user closed the approval surface without approving — **or** this was one of the wallet's randomized anti-phishing training rounds (about 1 in 10), which always reject. Either way, let the user retry. |
+| `The wallet approval was not opened in time. Please try again.` | The request was routed to the side panel but never picked up (panel closed mid-navigation, etc.). Retry. |
 | `The active account is not connected to this site. Call qc_requestAccounts first.` | You called a wallet method before connecting. |
 | `Not connected: call qc_requestAccounts first.` | You called a read (`eth_*`) method before connecting. |
+| `Please wait a moment before requesting wallet approval again.` | Per-origin approval throttle (or post-rejection cooldown). Wait a second or two and retry. |
+| `Too many pending wallet approval requests. Please resolve the open request(s) first.` | An approval is already open; only one is handled at a time. |
+| `Too many RPC requests. Please slow down and try again.` | Read-passthrough rate limit (100 requests / 10 s per origin). |
+| `RPC request too large.` | Read-passthrough request body exceeded 64 kB. |
 | `Unsupported method: <name>` | The method is not exposed by the provider. |
 | `Incompatible address: QuantumCoin uses 32-byte (64-hex) addresses; received an Ethereum-style 20-byte address.` | You passed a 20-byte Ethereum address. |
 
@@ -587,12 +607,21 @@ directly, as shown throughout this guide.
 ## Security model
 
 - **Keys never leave the wallet.** Signing happens inside the extension's
-  approval popup after the user enters their password; your page only ever
+  approval surface after the user enters their password; your page only ever
   receives public results (addresses, signatures, tx hashes).
+- **Side-panel approvals.** Approvals render in the browser side panel /
+  sidebar — chrome-level UI a web page cannot draw over or imitate.
+- **Spoof Buster Words.** Before any request details render, the user verifies
+  three personal anti-phishing words a spoofed window cannot know. Randomized
+  training rounds (~1 in 10, auto-rejected) keep the check effective.
 - **Explicit approval.** Connecting, signing, and sending each require the user
-  to confirm in the popup. Closing it rejects the request.
+  to confirm. Closing the surface rejects the request; abandoned routed
+  requests are auto-rejected after a timeout.
 - **Per-origin permissions.** Access is granted per website origin; the user can
-  disconnect at any time (and your site can call `qc_disconnect`).
+  disconnect at any time (and your site can call `qc_disconnect`). Approvals
+  and the read passthrough are rate-limited per origin.
+- **Insecure origins are flagged.** Plain-HTTP sites (other than localhost) get
+  a prominent warning banner in the approval card — serve your dApp over HTTPS.
 - **WYSIWYS.** For `qc_sendTransaction`, the wallet re-encodes the decoded
   calldata from your `abi` and byte-compares it to your `data`, so what the user
   sees is what actually gets signed.
@@ -622,11 +651,17 @@ click-through.
 - **`window.quantumcoin` is undefined.** The page must be `http(s)://` (not
   `file://`), the extension must be installed/enabled, and a wallet must exist.
   Reload after installing; or wait for the `quantumcoin#initialized` event.
-- **A call "hangs".** Wallet actions wait for the user to approve in the popup.
-  There is no built-in timeout — add your own if you need one, and handle the
-  `User rejected the request` rejection.
+- **A call "hangs".** Wallet actions wait for the user to approve in the side
+  panel. There is no built-in dApp-side timeout — add your own if you need one,
+  and handle the `User rejected the request` rejection. (Requests routed to a
+  panel that never opens are auto-rejected by the wallet after ~30 s.)
+- **A connect/sign/send was rejected "for no reason".** It was likely one of
+  the wallet's randomized anti-phishing training rounds (about 1 in 10), which
+  always reject. The user just retries the action.
 - **Reads fail with "Not connected".** Call `qc_requestAccounts` first; reads
   need a connected site to know which network node to use.
+- **Reads fail with "Too many RPC requests".** You hit the per-origin
+  passthrough limit (100 requests / 10 s); debounce or batch your polling.
 - **`eth_gasPrice` (or similar) errors with `-32601`.** That method is not
   enabled on the current network node; use `eth_estimateGas` and the wallet's
   own fee UI instead.

@@ -811,6 +811,18 @@ async function loadAccounts(password: string): Promise<Wallet[]> {
 }
 
 // ---- flow: connect ---------------------------------------------------
+// True for plain-HTTP origins other than local development hosts
+// (localhost / 127.x / [::1]), whose identity a network attacker can spoof.
+function isInsecureHttpOrigin(origin: string): boolean {
+    if (!origin.startsWith("http://")) return false;
+    try {
+        const host = new URL(origin).hostname;
+        return !(host === "localhost" || host === "[::1]" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host));
+    } catch {
+        return true;
+    }
+}
+
 function buildChallenge(origin: string, address: string): string {
     const nonceBytes = new Uint8Array(16);
     globalThis.crypto.getRandomValues(nonceBytes);
@@ -859,6 +871,9 @@ async function doConnect(origin: string, password: string): Promise<void> {
     await ensureNetwork();
     const net = networkInfo();
     await replyResult({ address: wallet.address, chainId: net ? net.chainId : null, network: net });
+    // SEC: drop the decrypted wallets (seed + private key references) as soon
+    // as the approval settles instead of holding them until the page unloads.
+    connectAccounts = null;
 }
 
 // Unlock step for the locked connect path: load the wallets, populate the
@@ -1599,6 +1614,13 @@ export async function initDappApproval(): Promise<void> {
         const origin = pendingRequest.origin || "";
         const params = pendingRequest.params || {};
         el("dappOrigin")!.textContent = origin;
+        // Plain-HTTP origins (other than local development hosts) are
+        // unauthenticated: a network MITM can impersonate the site. Surface
+        // that prominently before the user approves anything.
+        if (isInsecureHttpOrigin(origin)) {
+            const w = el("dappInsecureOrigin");
+            if (w) w.style.display = "";
+        }
 
         // Reject incompatible / malformed requests up front: show the message,
         // disable Approve, and don't render the request screen (Reject stays).

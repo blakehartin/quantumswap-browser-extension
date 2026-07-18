@@ -90,7 +90,7 @@ function buildHeader(): HTMLElement {
         ]),
         el("div", { class: "gradient", id: "gradient" }, [
             el("div", { class: "logo" }, [
-                el("img", { src: "assets/icons/app/dp.png", alt: "Title", class: "logoimg", id: "imgLogo" }),
+                el("img", { src: "assets/icons/app/dp.png", alt: "QuantumSwap logo", class: "logoimg", id: "imgLogo" }),
             ]),
             el("div", { id: "divCustomReleaseBanner", class: "custom-release-banner", style: "display: none;" }),
             el("div", { class: "animate-character", id: "divWalletTitle", "data-lang-key": "title" }, ["Title"]),
