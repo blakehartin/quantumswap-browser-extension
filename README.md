@@ -9,11 +9,17 @@ WebAssembly SDK runs.
 - **Tooling:** [WXT](https://wxt.dev) (Manifest V3 for Chrome, MV2 for Firefox from a single codebase)
 - **UI surfaces:** side panel / sidebar (docked, default), toolbar popup, detached window and full tab — all served from the same `index.html`
 - **Crypto:** the Go-compiled post-quantum WASM from `quantum-coin-js-sdk` runs directly in the popup
+- **Anti-phishing:** per-user [Spoof Buster Words](#spoof-buster-words) shown
+  before every dApp approval, with randomized training rounds
+- **dApp approvals:** hosted in the browser side panel (UI a web page cannot
+  spoof); a small redirector popup guides the user there
 
 ## Table of contents
 
 - [Architecture](#architecture)
   - [Why a separate esbuild step?](#why-a-separate-esbuild-step)
+- [Spoof Buster Words](#spoof-buster-words)
+- [dApp approval flow (side panel)](#dapp-approval-flow-side-panel)
 - [Building a dApp](#building-a-dapp)
 - [Prerequisites](#prerequisites)
 - [Install](#install)
@@ -45,7 +51,9 @@ renderer ts  --Api.send-->  preload    renderer ts  --Api.send-->  platform-brid
 - `entrypoints/index/` — the wallet UI entry (`index.html` + `main.ts`
   bootstrap mirroring the desktop `src/renderer.ts`). The same page serves all
   four surfaces via `?view=panel|popup|window|tab`. `entrypoints/approve/` is
-  the dApp approval popup (`approve.html?requestId=...`).
+  the dApp approval page (`approve.html?requestId=...`); it hosts the full
+  approval flow when rendered in the side panel (`&view=panel`) or a popup,
+  and doubles as the redirector/notice popup via `?mode=open-panel|notice`.
 - `src/screens`, `src/dialogs`, `src/app`, `src/lib`, `src/ui` — the renderer,
   ported from the desktop wallet: `el()`-built screen modules, per-domain app
   controllers with pure `*-core.ts` logic, and the typed `lib/bridge.ts`
@@ -74,10 +82,16 @@ renderer ts  --Api.send-->  preload    renderer ts  --Api.send-->  platform-brid
   byte-compatibility tests live in `src/lib/storage.test.ts`).
 - `entrypoints/background.ts` — the service worker. It makes the toolbar action
   open the docked surface, and acts as the **dApp broker** for the web3 provider
-  (`window.quantumcoin`): it opens approval popups, resolves page requests, and
-  owns post-broadcast confirmation polling. The injected provider and page relay
+  (`window.quantumcoin`): it validates and routes approval requests to the side
+  panel (see [dApp approval flow](#dapp-approval-flow-side-panel)), resolves
+  page requests, rate-limits the read-RPC passthrough per origin, and owns
+  post-broadcast confirmation polling. The injected provider and page relay
   live in `entrypoints/injected.content.ts` (MAIN world) and
   `entrypoints/relay.content.ts` (isolated world).
+- `src/app/spoofbuster.ts` (+ `src/app/spoofbuster-wordlist.ts`, the bundled
+  BIP-39 English wordlist) — the Spoof Buster Words feature: word generation,
+  storage, the unlock slider, the settings dialog, and the approval gate
+  helpers used by `src/approval/dapp.ts`.
 - `public/icon/*.png` — the toolbar/store icons, generated from the same logo the
   Electron app uses (`quantumswap.svg`) by `scripts/build-icons.mjs`, and wired
   into `manifest.icons` / `action.default_icon` in `wxt.config.ts`.
@@ -90,13 +104,58 @@ self-executing script loaded before the module entry). This cleanly injects the
 Node polyfills the SDKs need, keeps the 3.6 MB WASM payload out of the Vite
 graph, and guarantees the `*Api` globals exist before any renderer module runs.
 
+## Spoof Buster Words
+
+An anti-phishing mechanism unique to this wallet. During onboarding the wallet
+generates **three random words** (from the BIP-39 English wordlist), shows them
+as colored chips on the last welcome step, and quizzes the user on them in the
+final safety-quiz step. The words are the secret; the chip colors are fixed and
+identical for all users.
+
+- **Every genuine wallet request window shows the words first.** Before any
+  dApp approval renders, a gate asks the user to confirm that the three words
+  shown are theirs. A spoofed (fake) window cannot know the words, so a
+  mismatch — or no words at all — means the window is fake and must be closed.
+- **Training rounds.** Roughly 1 approval in 10 is a drill (the request is
+  rejected either way): method A shows decoy words to practice catching a
+  mismatch; method B skips the gate entirely, simulating a spoofed window, and
+  educates the user if they engage with the password field or approve buttons.
+- **Recall aids.** A slide-up banner re-shows the words after every unlock, and
+  **Settings > Spoof Buster Words** displays them on demand.
+- **Storage.** The words are stored locally, unencrypted by design (they must be
+  shown before unlock). They never leave the device and are not related to the
+  seed or password.
+
+## dApp approval flow (side panel)
+
+Approvals are hosted in the **side panel** (Chrome) / **sidebar** (Firefox) —
+browser chrome a web page cannot draw over — rather than in a free-floating
+popup a page could imitate:
+
+- **Panel already open:** the request is routed straight to it; a small
+  auto-closing notice popup points the user there.
+- **Panel closed (Chrome):** a centered redirector popup explains that genuine
+  approvals happen only in the side panel; its button opens the panel with the
+  click's user gesture and the flow continues there.
+- **Firefox with the sidebar closed:** `sidebarAction.open()` cannot be invoked
+  from a detached popup, so the full approval flow (Spoof Buster gate included)
+  runs in the popup window itself.
+
+Closing the surface without acting rejects the request; routed requests that
+are never picked up are auto-rejected after a timeout so they cannot block
+future approvals. One approval is in flight at a time, with per-origin
+open/reject throttles against approval-fatigue attacks. Plain-HTTP origins
+(other than localhost) get a prominent insecure-origin warning in the approval
+card.
+
 ## Building a dApp
 
 Websites can connect to the wallet through an Ethereum-like, EIP-1193-style
 provider injected at `window.quantumcoin` (for the QuantumCoin network, with
 32-byte addresses and `qc_*` methods). It lets a site connect an account, request
 signatures, send coins/tokens, deploy contracts, and read chain state — all with
-signing confined to the wallet's approval popups.
+signing confined to the wallet's side-panel approval flow (with the Spoof
+Buster anti-phishing gate).
 
 **→ See the [dApp Developer Guide](README-DAPP.md)** for the full provider API,
 every supported method and event, and copy-paste examples.
@@ -180,7 +239,7 @@ auto-reload unpacked builds: run `npm run build:firefox` again, then click
 
 The extension injects an EIP-1193-style provider (`window.quantumcoin`) into
 web pages via a content script, so sites can connect, request signatures, and
-send transactions through in-extension approval popups. `examples/dapp.html`
+send transactions through the side-panel approval flow. `examples/dapp.html`
 is a self-contained test page for that flow.
 
 For building your own dApp against `window.quantumcoin`, see the
@@ -201,20 +260,23 @@ Content scripts only run on `http(s)://` pages (not `file://`), so the example
 3. Open `http://localhost:3000/dapp.html` in the browser where the extension is
    loaded. The page shows **Provider: ready** once `window.quantumcoin` is
    injected (otherwise confirm the extension is loaded and reload the page).
-4. **Connect** — click **Connect Wallet**. A focused approval popup opens
-   (`approve.html?requestId=...`); enter your wallet password, pick an account,
-   and click **Sign & Connect**. The page logs the connected address and chain
-   id, and enables the sign/send buttons.
-5. **Sign a message** — edit the message field and click **Sign Message**. Enter
-   your password in the approval popup and click **Sign**; the 0x signature blob
-   is printed to the log.
+4. **Connect** — click **Connect Wallet**. If the side panel is closed, a small
+   redirector popup opens; click **Open side panel & continue** and the approval
+   renders in the panel (if the panel is already open, it is routed there
+   directly). Confirm your **Spoof Buster words**, enter your wallet password,
+   pick an account, and click **Sign & Connect**. The page logs the connected
+   address and chain id, and enables the sign/send buttons. (Roughly 1 in 10
+   approvals is a training drill that rejects the request — just retry.)
+5. **Sign a message** — edit the message field and click **Sign Message**.
+   Confirm the words, enter your password in the approval surface, and click
+   **Sign**; the 0x signature blob is printed to the log.
 6. **Send tokens/coins** — fill in the token contract, recipient address, and
    quantity, then click **Send Tokens** (or **Send Coins** for the native
-   asset). Review the details in the approval popup, enter your password, and
+   asset). Review the details in the approval surface, enter your password, and
    click **Sign & Send**. The page logs the returned `txHash`.
 7. **Confirmation event** — after broadcast, the background service worker polls
    the scan API and emits a `transactionResult` event. To prove it fires
-   independently of the popup, **close the approval popup right after signing**;
+   independently of the approval surface, **close it right after signing**;
    the `event: transactionResult { ..., status }` line still appears in the log.
 8. **Disconnect** — click **Disconnect** to revoke the site (`qc_disconnect`);
    the log shows `accountsChanged []` / `disconnect`.
@@ -227,16 +289,25 @@ you can watch the background side under `chrome://extensions` → the extension'
 
 Work through these in the popup to confirm parity with the desktop app:
 
-- **Create wallet** — accept EULA, generate a new seed, confirm it, set a
-  passphrase; a new address should appear.
+- **Create wallet** — accept EULA, read the welcome steps (the last one shows
+  your **Spoof Buster words**), pass the safety quiz (the final question asks
+  for your words), generate a new seed, confirm it, set a passphrase; a new
+  address should appear.
+- **Unlock** — the slide-up banner re-shows the Spoof Buster words.
 - **Restore** — from seed phrase and from an encrypted JSON file (a file exported
   from the desktop app decrypts here; the crypto is byte-compatible).
 - **Balances / tokens / transactions** load on the home screen.
 - **Copy address** (clipboard) and **open explorer link** (opens a new tab).
-- **Send** coins and tokens.
+- **Send** coins and tokens — the action button stays enabled while gas is
+  estimated; clicking early shows "Please wait, estimating gas..." and then
+  proceeds to review.
 - **Swap** — quote → approve/allowance → swap.
 - **QR display** and **network switching**.
-- **web3 dApp** — connect, sign a message, and send from `examples/dapp.html`
+- **Settings** — Wallet Path, Networks, Releases, Signing, **Spoof Buster
+  Words** (shows the stored words), and **Privacy Policy** (opens the hosted
+  policy). The burger menu also links to Builder / QuantumSwap / QuantumCoin.
+- **web3 dApp** — connect, sign a message, and send from `examples/dapp.html`,
+  confirming the Spoof Buster gate in the side panel each time
   (see [Test the web3 dApp example page](#test-the-web3-dapp-example-page)).
 
 ## Icons
@@ -273,4 +344,13 @@ npm run build:icons
   custom-network endpoints.
 - **Firefox manifest version:** WXT targets MV2 for Firefox by default (the most
   compatible option); Chrome uses MV3. Both apply
-  `script-src 'self' 'wasm-unsafe-eval'`.
+  `script-src 'self' 'wasm-unsafe-eval'` (required for the embedded Go WASM; no
+  remote code is loaded anywhere).
+- **Gas estimation UX:** action buttons stay enabled while gas is being
+  estimated. If the user clicks before the estimate lands (and has not manually
+  overridden gas), a "Please wait, estimating gas..." dialog shows, then the
+  flow proceeds to review automatically.
+- **Privacy:** the extension collects no user data and talks only to the
+  blockchain endpoints the user configures. The policy is hosted at
+  <https://quantumswap.com/browser-extension-privacy-policy.html> and linked
+  from **Settings > Privacy Policy**.

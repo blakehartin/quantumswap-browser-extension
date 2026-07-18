@@ -173,6 +173,12 @@ function buildApprovalCard(): HTMLElement {
                     "Only continue if you trust this site. It is requesting access to your QuantumCoin wallet.",
                 ]),
 
+                // Shown by initDappApproval() when the requesting origin is
+                // plain HTTP (not localhost): the origin is unauthenticated.
+                el("div", { id: "dappInsecureOrigin", class: "heading medium", "data-lang-key": "dapp-insecure-origin", style: "display:none; margin-top:10px; padding:8px 12px; border:1px solid #e0a800; border-radius:8px; color:#ffcf5c; text-align:left;" }, [
+                    "Warning: this site uses an insecure HTTP connection. Its identity cannot be verified and its requests can be tampered with in transit. Only continue if you understand the risk.",
+                ]),
+
                 // Shared account row (mirrors the connect address block) for the
                 // sign and send screens. Shown via renderAccountRow().
                 el("div", { id: "dappAccountRow", class: "input_container", style: "display:none; margin-top:12px;" }, [

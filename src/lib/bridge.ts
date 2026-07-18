@@ -8,8 +8,8 @@ export async function WriteTextToClipboard(text: string): Promise<void> {
 export async function OpenUrl(url: string): Promise<boolean> {
     try {
         await ShellApi.send("OpenUrlInShell", url);
-    } catch (e) {
-        console.log(e);
+    } catch {
+        /* rejected URL scheme or shell failure; nothing to surface */
     }
     return false;
 }

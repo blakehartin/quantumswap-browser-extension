@@ -151,6 +151,21 @@ export default defineBackground(() => {
     if (panelRoutedRequestId === requestId) panelRoutedRequestId = null;
   }
 
+  // A routed approval must be picked up by the approval page (signalled by its
+  // "approval-hello" keep-alive port) within this window. If the panel never
+  // received or acted on the navigate message (panel mid-reload, message lost,
+  // sidePanel.open silently failed), the request would otherwise dangle forever
+  // and - via the one-at-a-time rule - block every future approval.
+  const ROUTING_ACK_TIMEOUT_MS = 30000;
+  function armRoutingAckTimeout(requestId: string) {
+    setTimeout(() => {
+      if (!pending.has(requestId)) return;
+      const live = approvalPortsByRequest.get(requestId);
+      if (live && live.size > 0) return;
+      rejectPending(requestId, "The wallet approval was not opened in time. Please try again.");
+    }, ROUTING_ACK_TIMEOUT_MS);
+  }
+
   function rejectPending(requestId: string, message: string) {
     const p = pending.get(requestId);
     if (!p) return;
@@ -448,18 +463,27 @@ export default defineBackground(() => {
           // auto-closing notice popup pointing the user at the panel.
           routedRequests.add(requestId);
           safePost(panelPort, { type: "qc-navigate-approval", requestId });
+          armRoutingAckTimeout(requestId);
           // Tall enough for the header banner + title + full notice text
           // without the card's internal scrollbar.
           openHelperPopup(ext.runtime.getURL("approve.html?mode=notice"), 420, 400, null, () => { /* notice is best-effort */ });
-        } else {
-          // Panel is closed: open the redirector popup. Its button opens the
-          // side panel with the click's user gesture and marks the request
-          // routed; closing it without acting rejects the request.
+        } else if (cr?.sidePanel) {
+          // Panel is closed (Chromium): open the redirector popup. Its button
+          // opens the side panel with the click's user gesture and marks the
+          // request routed; closing it without acting rejects the request.
           const url = ext.runtime.getURL(
             `approve.html?requestId=${encodeURIComponent(requestId)}&mode=open-panel${windowId != null ? "&win=" + windowId : ""}`,
           );
           // Tall enough that title + explanation + both stacked buttons fit
           // without the card's internal scrollbar (browser clamps to screen).
+          openHelperPopup(url, 460, 680, requestId, onCreateError);
+        } else {
+          // No side-panel API (Firefox with the sidebar closed):
+          // sidebarAction.open() only works with a user gesture inside the
+          // target window, which a detached redirector popup does not have, so
+          // host the full approval flow (spoof gate included) in the popup
+          // itself. Closing it without acting rejects the request.
+          const url = ext.runtime.getURL(`approve.html?requestId=${encodeURIComponent(requestId)}`);
           openHelperPopup(url, 460, 680, requestId, onCreateError);
         }
       });
@@ -596,6 +620,27 @@ export default defineBackground(() => {
 
   let rpcIdCounter = 0;
 
+  // Per-origin token bucket for the read passthrough, so a connected page
+  // cannot use the extension as an unbounded fetch proxy against the user's
+  // node (e.g. hammering eth_getLogs). Generous for legitimate polling dApps.
+  const RPC_RATE_WINDOW_MS = 10000;
+  const RPC_RATE_MAX_PER_WINDOW = 100;
+  const RPC_MAX_PARAMS_JSON_BYTES = 64 * 1024;
+  const rpcRateByOrigin = new Map<string, { windowStart: number; count: number }>();
+
+  function checkRpcRateLimit(origin: string): void {
+    const now = Date.now();
+    const slot = rpcRateByOrigin.get(origin);
+    if (!slot || now - slot.windowStart >= RPC_RATE_WINDOW_MS) {
+      rpcRateByOrigin.set(origin, { windowStart: now, count: 1 });
+      return;
+    }
+    slot.count += 1;
+    if (slot.count > RPC_RATE_MAX_PER_WINDOW) {
+      throw new Error("Too many RPC requests. Please slow down and try again.");
+    }
+  }
+
   // Forward one allowlisted read method to the origin's node RPC and return the
   // JSON-RPC `result`. Throws with the node's error message (code preserved when
   // available) on a JSON-RPC error, and on transport/timeout failures. dApp
@@ -605,6 +650,15 @@ export default defineBackground(() => {
     if (!endpoint) {
       throw new Error("Not connected: call qc_requestAccounts first.");
     }
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: ++rpcIdCounter,
+      method,
+      params: Array.isArray(params) ? params : [],
+    });
+    if (body.length > RPC_MAX_PARAMS_JSON_BYTES) {
+      throw new Error("RPC request too large.");
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     let resp: any;
@@ -612,12 +666,7 @@ export default defineBackground(() => {
       resp = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: ++rpcIdCounter,
-          method,
-          params: Array.isArray(params) ? params : [],
-        }),
+        body,
         signal: controller.signal,
       });
     } catch (e: any) {
@@ -667,6 +716,7 @@ export default defineBackground(() => {
     // net_version are part of this allowlist and answered by the node.
     if (READ_RPC_METHODS.has(msg.method)) {
       if (!site || !site.network) throw new Error(notConnectedError);
+      checkRpcRateLimit(origin);
       return rpcPassthrough(msg.method, params, site);
     }
 
@@ -732,6 +782,7 @@ export default defineBackground(() => {
       // it): navigate this fresh panel to the approval page.
       if (panelRoutedRequestId != null && routedRequests.has(panelRoutedRequestId) && pending.has(panelRoutedRequestId)) {
         safePost(port, { type: "qc-navigate-approval", requestId: panelRoutedRequestId });
+        armRoutingAckTimeout(panelRoutedRequestId);
       }
       return;
     }
@@ -878,6 +929,7 @@ export default defineBackground(() => {
     if (msg.type === "qc-approval-mark-routed") {
       if (typeof msg.requestId === "string" && pending.has(msg.requestId)) {
         routedRequests.add(msg.requestId);
+        armRoutingAckTimeout(msg.requestId);
       }
       sendResponse({ ok: true });
       return;
@@ -890,6 +942,9 @@ export default defineBackground(() => {
         clearRouted(msg.requestId);
         if (msg.approved) {
           if (p.method === "qc_requestAccounts" && msg.result && msg.result.address) {
+            // Resolve the dApp's promise only AFTER the site record persists,
+            // so an immediate follow-up call (qc_accounts / read RPC) already
+            // sees the connection.
             getConnectedSites().then((sites) => {
               const existing = sites[p.origin];
               const accounts = existing ? existing.accounts.slice() : [];
@@ -904,9 +959,13 @@ export default defineBackground(() => {
                 emitToTab(p.tabId, "connect", { chainId: info.chainId });
                 emitToTab(p.tabId, "accountsChanged", [info.activeAddress]);
               });
-            });
+            }).then(
+              () => p.resolve(msg.result),
+              () => p.resolve(msg.result),
+            );
+          } else {
+            p.resolve(msg.result);
           }
-          p.resolve(msg.result);
         } else {
           markApprovalRejected(p.origin);
           p.reject(new Error(msg.error || "User rejected the request"));

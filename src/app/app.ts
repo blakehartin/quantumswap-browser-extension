@@ -629,6 +629,10 @@ export function checkNewPassword(): boolean | void {
     }
 
     onboardingStore.tempPassword = password;
+    // SEC: the inputs are no longer needed; don't leave the password readable
+    // in the DOM while the rest of onboarding runs.
+    inputById("pwdPassword").value = "";
+    inputById("pwdRetypePassword").value = "";
 
     showCreateWalletPromptScreen();
 }
@@ -951,6 +955,8 @@ export function verifyWalletPassword(): boolean | void {
     } else {
         onboardingStore.tempPassword = password;
     }
+    // SEC: value captured; clear the DOM input before the async save runs.
+    inputById("pwdVerifyWalletPassword").value = "";
 
     showLoadingAndExecuteAsync(langJson.langValues.waitWalletSave, saveWallet);
 }
@@ -1221,6 +1227,8 @@ export async function restoreWalletFileOpen(): Promise<void> {
             }
 
             const walletPassword = inputById("pwdRestoreWallet").value;
+            // SEC: value captured; clear the DOM input immediately.
+            inputById("pwdRestoreWallet").value = "";
             walletStore.currentWallet = await walletCreateNewWalletFromJson(walletJson, walletPassword);
 
             hideWaitingBox();
@@ -1332,6 +1340,8 @@ export function backupSpecificWallet(): void {
 
 export async function encryptAndBackupSpecificWallet(): Promise<void> {
     const password = inputById("pwdBackupSpecificWallet").value;
+    // SEC: value captured; clear the DOM input immediately.
+    inputById("pwdBackupSpecificWallet").value = "";
     let specificWallet: Wallet | null;
     try {
         specificWallet = await walletGetByAddress(password, walletStore.specificWalletAddress);
@@ -1396,6 +1406,8 @@ export function showRevealSeedPanel(): boolean | void {
 
 export async function revealSeedWallet(): Promise<void> {
     const password = inputById("pwdRevealSeedScreenPassword").value;
+    // SEC: value captured; clear the DOM input immediately.
+    inputById("pwdRevealSeedScreenPassword").value = "";
     let specificWallet: Wallet | null;
     try {
         specificWallet = await walletGetByAddress(password, walletStore.specificWalletAddress);
@@ -1487,6 +1499,9 @@ export function unlockWallet(): boolean | void {
 
 export async function decryptAndUnlockWallet(): Promise<boolean | void> {
     const password = inputById("pwdUnlock").value;
+    // SEC: don't leave the master password sitting in the (hidden) input for
+    // the rest of the unlocked session; the local is all we need from here.
+    inputById("pwdUnlock").value = "";
 
     try {
         const walletList = await walletLoadAll(password);
@@ -1685,7 +1700,7 @@ export async function checkAndAddNetwork(): Promise<void> {
     try {
         const jsonString = ((byId<HTMLTextAreaElement>("txtNetworkJSON")).value || "").replace(/^\uFEFF/, "").trim();
         if (jsonString.length < 1) {
-            showWarnAlert(langJson.langValues.invalidNetworkJson);
+            showWarnAlert(langJson.errors.invalidNetworkJson);
             return;
         }
         await blockchainNetworkAddNew(jsonString);
