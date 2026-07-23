@@ -15,7 +15,12 @@ export const STABLECOIN_IMPERSONATOR_PATTERNS = [
     "frax", "fdusd", "lusd", "tusd", "gusd", "pyusd",
     "eurt", "eurc", "eurs",
     "dollar", "euro", "yen", "gbpt", "cny",
-    "inr", "rupee", "rupiah"
+    "inr", "rupee", "rupiah",
+    // Malicious impersonators (not stablecoins): tokens posing as the
+    // chain's own coin or its predecessor project. "dogep" (no space) does not
+    // match "doge protocol" as a substring, so both are listed; "quantumcoin"
+    // also covers punctuated variants like "quantumcoin:".
+    "dogep", "doge protocol", "quantumcoin", "quantum coin"
 ];
 
 export function isRecognizedToken(contract: string | null | undefined) {
